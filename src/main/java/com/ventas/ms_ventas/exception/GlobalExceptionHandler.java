@@ -79,4 +79,12 @@ public class GlobalExceptionHandler {
         error.put("error", ex.getMessage());
         return error;
     }
+
+    @ExceptionHandler(DevolucionInvalidaException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> manejoDevolucionInvalida(DevolucionInvalidaException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("error", ex.getMessage());
+        return error;
+    }
 }

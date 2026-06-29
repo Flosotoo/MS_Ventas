@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import com.ventas.ms_ventas.dto.AjusteStockDTO;
+import com.ventas.ms_ventas.exception.DevolucionInvalidaException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.model.DetalleDevolucion;
 import com.ventas.ms_ventas.model.DetalleVenta;
