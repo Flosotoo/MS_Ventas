@@ -54,6 +54,9 @@ public class VentaService {
     @Value("${ms.pedidos.url}")
     private String URL_MS_PEDIDOS;
 
+    @Value("${ms.pedidos.estado.url}")
+    private String URL_MS_PEDIDOS_ESTADO;
+
     @Value("${ms.inventario.disponibilidad.url}")
     private String URL_MS_INVENTARIO_DISPONIBILIDAD;
 
@@ -126,6 +129,27 @@ public class VentaService {
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }
         return guardada;
+    }
+
+    // HU-55 -> Registrar retiro del pedido
+    public Venta registrarRetiro(Venta venta) {
+        if (venta.getIdPedido() == null) {
+            throw new RecursoNoEncontradoException("Para registrar un retiro se requiere el idPedido");
+        }
+        Venta guardada = registrarVentaDirecta(venta);
+        marcarPedidoRetirado(venta.getIdPedido());
+        return guardada;
+    }
+
+    private void marcarPedidoRetirado(Long idPedido) {
+        try {
+            String url = URL_MS_PEDIDOS_ESTADO + idPedido + "/estado?estado=RETIRADO";
+            restTemplate.put(url, null);
+        } catch (ResourceAccessException ex) {
+            log.warn(
+                    "No se pudo marcar el pedido {} como RETIRADO en MS Envíos (se omite, pendiente de que el MS exista): {}",
+                    idPedido, ex.getMessage());
+        }
     }
 
     public void anularVenta(Long id) {

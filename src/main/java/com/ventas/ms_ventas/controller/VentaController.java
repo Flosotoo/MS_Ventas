@@ -45,6 +45,12 @@ public class VentaController {
         return new ResponseEntity<>(nueva, HttpStatus.CREATED);
     }
 
+    @PostMapping("/retiro")
+    public ResponseEntity<Venta> registrarRetiro(@Valid @RequestBody Venta venta) {
+        Venta nueva = ventaService.registrarRetiro(venta);
+        return new ResponseEntity<>(nueva, HttpStatus.CREATED);
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Venta> getVenta(@PathVariable Long id) {
         Venta buscada = ventaService.findById(id)
