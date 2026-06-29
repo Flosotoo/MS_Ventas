@@ -93,4 +93,22 @@ public class DevolucionService {
     public List<Devolucion> listarPorVenta(Long idVenta) {
         return devolucionRepository.findByVenta_IdVenta(idVenta);
     }
+
+    public void anularDevolucion(Long id) {
+        Devolucion devolucion = devolucionRepository.findById(id)
+                .orElseThrow(() -> new RecursoNoEncontradoException(
+                        "No se encontró la devolución con id " + id));
+        Long idSucursal = devolucion.getVenta().getIdSucursal();
+        // se revierte la devolución. idOperacion con prefijo distinto para que la
+        // idempotencia no lo confunda.
+        for (DetalleDevolucion dd : devolucion.getDetalles()) {
+            AjusteStockDTO ajuste = new AjusteStockDTO(
+                    dd.getIdProducto(),
+                    idSucursal,
+                    -dd.getCantidad(), // NEGATIVO: deshace el reingreso
+                    "anulacion-devolucion-" + devolucion.getIdDevolucion() + "-producto-" + dd.getIdProducto());
+            restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
+        }
+        devolucionRepository.delete(devolucion);
+    }
 }
