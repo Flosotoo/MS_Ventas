@@ -59,7 +59,7 @@ public class VentaService {
         }
         venta.setPorcentajeDescuento(descuento);
 
-        //Validacion de cada producto y calculo de subtotales
+        // Validacion de cada producto y calculo de subtotales
         BigDecimal subtotalNeto = BigDecimal.ZERO;
         for (DetalleVenta detalle : venta.getDetalles()) {
             String url = URL_MS_PRODUCTOS + detalle.getIdProducto();
@@ -105,7 +105,7 @@ public class VentaService {
         venta.setIva(iva);
         venta.setTotal(total);
         venta.setFecha(LocalDateTime.now());
-        //se guarda la venta
+        // se guarda la venta
         Venta guardada = ventaRepository.save(venta);
         // Se descuenta stock
         for (DetalleVenta detalle : guardada.getDetalles()) {
@@ -117,6 +117,44 @@ public class VentaService {
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }
         return guardada;
+    }
+
+    public void anularVenta(Long id) {
+        Venta venta = ventaRepository.findById(id)
+                .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró la venta con id " + id));
+        // Se revierte el stock
+        for (DetalleVenta detalle : venta.getDetalles()) {
+            AjusteStockDTO ajuste = new AjusteStockDTO(
+                    detalle.getIdProducto(),
+                    venta.getIdSucursal(),
+                    detalle.getCantidad(), // POSITIVO: reingresa lo vendido
+                    "anulacion-venta-" + venta.getIdVenta() + "-producto-" + detalle.getIdProducto());
+            restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
+        }
+        ventaRepository.delete(venta);
+    }
+
+    public Venta actualizarDescuento(Long id, BigDecimal nuevoDescuento) {
+        Venta venta = ventaRepository.findById(id)
+                .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró la venta con id " + id));
+        if (nuevoDescuento == null) {
+            nuevoDescuento = BigDecimal.ZERO;
+        }
+        if (nuevoDescuento.compareTo(DESCUENTO_MAXIMO) > 0) {
+            throw new DescuentoNoAutorizadoException(
+                    "El descuento de " + nuevoDescuento + "% supera el máximo permitido ("
+                            + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
+        }
+        // Recalcular sobre el subtotal neto
+        BigDecimal montoDescuento = venta.getSubtotalNeto()
+                .multiply(nuevoDescuento)
+                .divide(new BigDecimal("100"), 0, RoundingMode.HALF_UP);
+        BigDecimal netoConDescuento = venta.getSubtotalNeto().subtract(montoDescuento);
+        BigDecimal iva = netoConDescuento.multiply(TASA_IVA).setScale(0, RoundingMode.HALF_UP);
+        venta.setPorcentajeDescuento(nuevoDescuento);
+        venta.setIva(iva);
+        venta.setTotal(netoConDescuento.add(iva));
+        return ventaRepository.save(venta);
     }
 
     public Optional<Venta> findById(Long id) {

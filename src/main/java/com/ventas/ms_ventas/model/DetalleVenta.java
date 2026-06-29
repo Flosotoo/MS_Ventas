@@ -1,4 +1,5 @@
 package com.ventas.ms_ventas.model;
+
 import java.math.BigDecimal;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
@@ -24,7 +25,7 @@ public class DetalleVenta {
     @JsonBackReference
     private Venta venta;
 
-    //externo de MS prodcutos y stock
+    // externo de MS prodcutos y stock
     @NotNull(message = "El producto es obligatorio")
     @Positive(message = "El id de producto debe ser un número positivo")
     @Column(name = "id_producto", nullable = false)
@@ -42,4 +43,7 @@ public class DetalleVenta {
 
     @Column(name = "subtotal", nullable = false, precision = 10, scale = 0)
     private BigDecimal subtotal;
+
+    @Column(name = "porcentaje_descuento", nullable = false, precision = 5, scale = 2)
+    private BigDecimal porcentajeDescuento;
 }

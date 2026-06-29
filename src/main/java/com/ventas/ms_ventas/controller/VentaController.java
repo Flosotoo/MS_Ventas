@@ -1,13 +1,16 @@
 package com.ventas.ms_ventas.controller;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -56,5 +59,18 @@ public class VentaController {
                         "No existe una venta asociada al pedido " + idPedido));
         return new ResponseEntity<>(buscada, HttpStatus.OK);
     }
-}
 
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> anularVenta(@PathVariable Long id) {
+        ventaService.anularVenta(id);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
+    @PutMapping("/{id}/descuento")
+    public ResponseEntity<Venta> actualizarDescuento(
+            @PathVariable Long id,
+            @RequestParam BigDecimal porcentaje) {
+        Venta actualizada = ventaService.actualizarDescuento(id, porcentaje);
+        return new ResponseEntity<>(actualizada, HttpStatus.OK);
+    }
+}
