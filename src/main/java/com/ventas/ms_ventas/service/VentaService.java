@@ -12,9 +12,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import com.ventas.ms_ventas.dto.AjusteStockDTO;
+import com.ventas.ms_ventas.dto.ClienteDTO;
+import com.ventas.ms_ventas.dto.PedidoDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
@@ -45,6 +48,12 @@ public class VentaService {
     @Value("${ms.inventario.ajuste.url}")
     private String URL_MS_INVENTARIO_AJUSTE;
 
+    @Value("${ms.clientes.url}")
+    private String URL_MS_CLIENTES;
+
+    @Value("${ms.pedidos.url}")
+    private String URL_MS_PEDIDOS;
+
     @Value("${ms.inventario.disponibilidad.url}")
     private String URL_MS_INVENTARIO_DISPONIBILIDAD;
 
@@ -58,6 +67,8 @@ public class VentaService {
                             + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
+        validarCliente(venta.getIdCliente());
+        validarPedido(venta.getIdPedido());
         // Validacion de cada producto y calculo de subtotales
         BigDecimal subtotalNeto = BigDecimal.ZERO;
         for (DetalleVenta detalle : venta.getDetalles()) {
@@ -172,5 +183,40 @@ public class VentaService {
 
     public List<Venta> listarPorSucursal(Long idSucursal) {
         return ventaRepository.findByIdSucursal(idSucursal);
+    }
+
+    private void validarCliente(Long idCliente) {
+        // Solo se valida si viene (en venta presencial anónima es null y se omite)
+        if (idCliente == null) {
+            return;
+        }
+        String url = URL_MS_CLIENTES + idCliente;
+        try {
+            ClienteDTO cliente = restTemplate.getForObject(url, ClienteDTO.class);
+            if (cliente == null) {
+                throw new RecursoNoEncontradoException("El cliente " + idCliente + " no existe");
+            }
+        } catch (ResourceAccessException ex) {
+            // MS Clientes no disponible: no bloquear, solo advertir (degradación elegante)
+            log.warn("No se pudo validar el cliente {} contra MS Clientes (se omite validación): {}",
+                    idCliente, ex.getMessage());
+        }
+    }
+
+    private void validarPedido(Long idPedido) {
+        // Solo se valida si viene (en venta presencial directa es null y se omite)
+        if (idPedido == null) {
+            return;
+        }
+        String url = URL_MS_PEDIDOS + idPedido;
+        try {
+            PedidoDTO pedido = restTemplate.getForObject(url, PedidoDTO.class);
+            if (pedido == null) {
+                throw new RecursoNoEncontradoException("El pedido " + idPedido + " no existe");
+            }
+        } catch (ResourceAccessException ex) {
+            log.warn("No se pudo validar el pedido {} contra MS Envíos (se omite validación): {}",
+                    idPedido, ex.getMessage());
+        }
     }
 }
