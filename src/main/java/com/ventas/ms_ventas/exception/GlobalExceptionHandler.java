@@ -71,4 +71,12 @@ public class GlobalExceptionHandler {
         error.put("error", "Ocurrió un error inesperado: " + ex.getMessage());
         return error;
     }
+
+    @ExceptionHandler(StockInsuficienteException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> manejoStockInsuficiente(StockInsuficienteException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("error", ex.getMessage());
+        return error;
+    }
 }

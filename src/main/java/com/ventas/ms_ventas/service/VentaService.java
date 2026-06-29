@@ -18,6 +18,7 @@ import com.ventas.ms_ventas.dto.AjusteStockDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
+import com.ventas.ms_ventas.exception.StockInsuficienteException;
 import com.ventas.ms_ventas.model.DetalleVenta;
 import com.ventas.ms_ventas.model.Venta;
 import com.ventas.ms_ventas.repository.VentaRepository;
@@ -25,11 +26,11 @@ import com.ventas.ms_ventas.repository.VentaRepository;
 @Service
 public class VentaService {
     private static final Logger log = LoggerFactory.getLogger(VentaService.class);
-    
-    //Tope de descuento sin autorizacion
+
+    // Tope de descuento sin autorizacion
     private static final BigDecimal DESCUENTO_MAXIMO = new BigDecimal("50");
-    
-    //IVA
+
+    // IVA
     private static final BigDecimal TASA_IVA = new BigDecimal("0.19");
 
     @Autowired
@@ -44,6 +45,9 @@ public class VentaService {
     @Value("${ms.inventario.ajuste.url}")
     private String URL_MS_INVENTARIO_AJUSTE;
 
+    @Value("${ms.inventario.disponibilidad.url}")
+    private String URL_MS_INVENTARIO_DISPONIBILIDAD;
+
     public Venta registrarVentaDirecta(Venta venta) {
         BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
                 ? venta.getPorcentajeDescuento()
@@ -54,7 +58,8 @@ public class VentaService {
                             + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
-        //Validacion de cada producto contra MS Productos y calcular subtotales
+
+        //Validacion de cada producto y calculo de subtotales
         BigDecimal subtotalNeto = BigDecimal.ZERO;
         for (DetalleVenta detalle : venta.getDetalles()) {
             String url = URL_MS_PRODUCTOS + detalle.getIdProducto();
@@ -63,13 +68,33 @@ public class VentaService {
                 throw new RecursoNoEncontradoException(
                         "El producto " + detalle.getIdProducto() + " no existe en el catálogo");
             }
-            detalle.setVenta(venta); // completa el lado dueño de la relación
+
+            detalle.setVenta(venta);
             BigDecimal subtotal = detalle.getPrecioUnitario()
                     .multiply(BigDecimal.valueOf(detalle.getCantidad()));
             detalle.setSubtotal(subtotal);
             subtotalNeto = subtotalNeto.add(subtotal);
         }
-        // Aplicar descuento sobre el neto
+
+        // Verificacion de disponibilidad de los productos
+        // Si alguno no alcanza, se lanza excepción antes de tocar el stock.
+        for (DetalleVenta detalle : venta.getDetalles()) {
+            String url = URL_MS_INVENTARIO_DISPONIBILIDAD
+                    + "?idProducto=" + detalle.getIdProducto()
+                    + "&idSucursal=" + venta.getIdSucursal();
+            Integer disponible = restTemplate.getForObject(url, Integer.class);
+            if (disponible == null) {
+                throw new RecursoNoEncontradoException(
+                        "No existe inventario para el producto " + detalle.getIdProducto()
+                                + " en la sucursal " + venta.getIdSucursal());
+            }
+            if (disponible < detalle.getCantidad()) {
+                throw new StockInsuficienteException(
+                        "Stock insuficiente para el producto " + detalle.getIdProducto()
+                                + ": disponible " + disponible + ", solicitado " + detalle.getCantidad());
+            }
+        }
+        // descuentos e iva
         BigDecimal montoDescuento = subtotalNeto
                 .multiply(descuento)
                 .divide(new BigDecimal("100"), 0, RoundingMode.HALF_UP);
@@ -80,17 +105,14 @@ public class VentaService {
         venta.setIva(iva);
         venta.setTotal(total);
         venta.setFecha(LocalDateTime.now());
-
-        // Guardar la venta
+        //se guarda la venta
         Venta guardada = ventaRepository.save(venta);
-
-        // desconta stock físico vía MS Productos y Stock
-        //  idOperacion único por línea para idempotencia (no duplicar si hay reintento).
+        // Se descuenta stock
         for (DetalleVenta detalle : guardada.getDetalles()) {
             AjusteStockDTO ajuste = new AjusteStockDTO(
                     detalle.getIdProducto(),
                     guardada.getIdSucursal(),
-                    -detalle.getCantidad(), // NEGATIVO: una venta resta stock
+                    -detalle.getCantidad(),
                     "venta-" + guardada.getIdVenta() + "-producto-" + detalle.getIdProducto());
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }
