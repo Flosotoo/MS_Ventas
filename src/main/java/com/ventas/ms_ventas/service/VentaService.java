@@ -58,7 +58,6 @@ public class VentaService {
                             + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
-
         // Validacion de cada producto y calculo de subtotales
         BigDecimal subtotalNeto = BigDecimal.ZERO;
         for (DetalleVenta detalle : venta.getDetalles()) {
@@ -68,14 +67,13 @@ public class VentaService {
                 throw new RecursoNoEncontradoException(
                         "El producto " + detalle.getIdProducto() + " no existe en el catálogo");
             }
-
             detalle.setVenta(venta);
             BigDecimal subtotal = detalle.getPrecioUnitario()
                     .multiply(BigDecimal.valueOf(detalle.getCantidad()));
             detalle.setSubtotal(subtotal);
+            detalle.setPorcentajeDescuento(descuento);
             subtotalNeto = subtotalNeto.add(subtotal);
         }
-
         // Verificacion de disponibilidad de los productos
         // Si alguno no alcanza, se lanza excepción antes de tocar el stock.
         for (DetalleVenta detalle : venta.getDetalles()) {
@@ -154,6 +152,9 @@ public class VentaService {
         venta.setPorcentajeDescuento(nuevoDescuento);
         venta.setIva(iva);
         venta.setTotal(netoConDescuento.add(iva));
+        for (DetalleVenta detalle : venta.getDetalles()) {
+            detalle.setPorcentajeDescuento(nuevoDescuento);
+        }
         return ventaRepository.save(venta);
     }
 
