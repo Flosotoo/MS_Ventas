@@ -19,6 +19,7 @@ import com.ventas.ms_ventas.dto.AjusteStockDTO;
 import com.ventas.ms_ventas.dto.ClienteDTO;
 import com.ventas.ms_ventas.dto.PedidoDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
+import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
@@ -60,6 +61,9 @@ public class VentaService {
     @Value("${ms.inventario.disponibilidad.url}")
     private String URL_MS_INVENTARIO_DISPONIBILIDAD;
 
+    @Value("${ms.sucursales.url}")
+    private String URL_MS_SUCURSALES;
+
     public Venta registrarVentaDirecta(Venta venta) {
         BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
                 ? venta.getPorcentajeDescuento()
@@ -70,6 +74,7 @@ public class VentaService {
                             + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
+        validarSucursal(venta.getIdSucursal());
         validarCliente(venta.getIdCliente());
         validarPedido(venta.getIdPedido());
         // Validacion de cada producto y calculo de subtotales
@@ -241,6 +246,21 @@ public class VentaService {
         } catch (ResourceAccessException ex) {
             log.warn("No se pudo validar el pedido {} contra MS Envíos (se omite validación): {}",
                     idPedido, ex.getMessage());
+        }
+    }
+
+    private void validarSucursal(Long idSucursal) {
+        // idSucursal es obligatorio en toda venta, así que siempre se valida
+        String url = URL_MS_SUCURSALES + idSucursal;
+        try {
+            SucursalDTO sucursal = restTemplate.getForObject(url, SucursalDTO.class);
+            if (sucursal == null) {
+                throw new RecursoNoEncontradoException("La sucursal " + idSucursal + " no existe");
+            }
+        } catch (ResourceAccessException ex) {
+            // Advertencia en caso d no tener disponibilidad
+            log.warn("No se pudo validar la sucursal {} contra MS Sucursales (se omite validación): {}",
+                    idSucursal, ex.getMessage());
         }
     }
 }
