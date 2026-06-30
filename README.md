@@ -72,10 +72,12 @@ Requiere que MySQL esté corriendo (XAMPP). La base de datos `db_ventas` se crea
 ./mvnw test
 ```
 
-El MS incluye tres niveles de prueba:
+El MS incluye dos dominios de prueba (ventas y devoluciones), cada uno con sus tres niveles:
 
-- **`VentaServiceTest`** (unitario, Mockito): valida las reglas de negocio del service — cálculo de IVA (19%) y total, rechazo de descuento sobre el 50% y rechazo por stock insuficiente. Mockea las llamadas a los otros microservicios.
-- **`VentaControllerTest`** (`@WebMvcTest`): valida la capa web aislada — códigos HTTP correctos (201/200/404/409) con el service mockeado.
+- **`VentaServiceTest`** (unitario, Mockito): valida las reglas de negocio del service — cálculo de IVA (19%) y total, rechazo de descuento sobre el 50%, rechazo por stock insuficiente, anulación de venta con reversión de stock, actualización de descuento y registro de retiro web. Mockea las llamadas a los otros microservicios.
+- **`DevolucionServiceTest`** (unitario, Mockito): valida las reglas de negocio de devoluciones — reingreso de stock, rechazo cuando el producto no pertenece a la venta, rechazo al devolver más de lo vendido (considerando devoluciones previas acumuladas) y anulación con reversión del reingreso.
+- **`VentaControllerTest`** (`@WebMvcTest`): valida la capa web de ventas aislada — códigos HTTP correctos (200/201/204/404/409) con el service mockeado.
+- **`DevolucionControllerTest`** (`@WebMvcTest`): valida la capa web de devoluciones aislada — códigos HTTP correctos (200/201/204/404/409) con el service mockeado.
 - **`VentaControllerIT`** (`@SpringBootTest`): valida la cadena completa controller → service → base de datos (H2 en memoria), mockeando solo las llamadas a otros microservicios.
 
 ## Estructura de requests y respuestas
