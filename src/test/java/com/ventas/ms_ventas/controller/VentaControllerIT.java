@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.RestTemplate;
 
 import com.ventas.ms_ventas.dto.ProductoDTO;
+import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.model.DetalleVenta;
 import com.ventas.ms_ventas.model.Venta;
 import com.ventas.ms_ventas.repository.VentaRepository;
@@ -58,6 +59,11 @@ class VentaControllerIT {
         when(restTemplate.getForObject(anyString(), eq(ProductoDTO.class))).thenReturn(producto);
         // Hay 50 unidades disponibles
         when(restTemplate.getForObject(anyString(), eq(Integer.class))).thenReturn(50);
+        // Validar sucursal
+        SucursalDTO sucursal = new SucursalDTO();
+        sucursal.setIdSucursal(1L);
+        sucursal.setNombre("Sucursal Centro");
+        when(restTemplate.getForObject(anyString(), eq(SucursalDTO.class))).thenReturn(sucursal);
         // El PUT de descuento de stock no devuelve nada relevante (void)
         doNothing().when(restTemplate).put(anyString(), any());
     }

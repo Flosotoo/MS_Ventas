@@ -26,6 +26,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 import com.ventas.ms_ventas.dto.ProductoDTO;
+import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
 import com.ventas.ms_ventas.model.DetalleVenta;
@@ -53,6 +54,7 @@ class VentaServiceTest {
         ReflectionTestUtils.setField(ventaService, "URL_MS_CLIENTES", "http://localhost:9999/api/clientes/");
         ReflectionTestUtils.setField(ventaService, "URL_MS_PEDIDOS", "http://localhost:9999/api/pedidos/");
         ReflectionTestUtils.setField(ventaService, "URL_MS_PEDIDOS_ESTADO", "http://localhost:9999/api/pedidos/");
+        ReflectionTestUtils.setField(ventaService, "URL_MS_SUCURSALES", "http://localhost:9999/api/v1/sucursales/");
     }
 
     // Venta de 2 unidades con descuento
@@ -69,10 +71,18 @@ class VentaServiceTest {
         return venta;
     }
 
+    private void mockSucursalValida() {
+        SucursalDTO sucursal = new SucursalDTO();
+        sucursal.setIdSucursal(1L);
+        sucursal.setNombre("Sucursal Centro");
+        when(restTemplate.getForObject(anyString(), eq(SucursalDTO.class))).thenReturn(sucursal);
+    }
+
     @Test
     void testRegistrarVentaDirecta_calculaIVAyTotalCorrectamente() {
         // 2 x 45000 = 90000 neto * IVA 19% = 17100; total = 107100
         Venta venta = crearVenta(BigDecimal.ZERO);
+        mockSucursalValida();
         ProductoDTO producto = new ProductoDTO();
         producto.setIdProducto(1L);
         producto.setNombre("Perfume Test");
@@ -96,6 +106,7 @@ class VentaServiceTest {
     @Test
     void testRegistrarVentaDirecta_descuentoSobreTope_lanzaExcepcion() {
         // Se supera el máximo de 50% => DescuentoNoAutorizadoException
+        //El descuento se valida antes de validar la sucursal, por ende no hay necesidad de mockearla
         Venta venta = crearVenta(new BigDecimal("60"));
         DescuentoNoAutorizadoException ex = assertThrows(
                 DescuentoNoAutorizadoException.class,
@@ -110,6 +121,7 @@ class VentaServiceTest {
     void testRegistrarVentaDirecta_stockInsuficiente_lanzaExcepcion() {
         // Pide 2 pero solo hay 1 disponible -> StockInsuficienteException
         Venta venta = crearVenta(BigDecimal.ZERO);
+        mockSucursalValida();
         ProductoDTO producto = new ProductoDTO();
         producto.setIdProducto(1L);
         producto.setNombre("Perfume Test");
