@@ -98,4 +98,39 @@ class VentaControllerTest {
                 .content(objectMapper.writeValueAsString(venta)))
                 .andExpect(status().isConflict());
     }
+
+    @Test
+    void testGetVentas_devuelve200() throws Exception {
+        Venta venta = crearVentaConTotales();
+        when(ventaService.listarVentas()).thenReturn(java.util.List.of(venta));
+        mockMvc.perform(get("/api/ventas"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].idVenta").value(1));
+    }
+
+    @Test
+    void testGetVentas_vacio_devuelve204() throws Exception {
+        when(ventaService.listarVentas()).thenReturn(java.util.List.of());
+        mockMvc.perform(get("/api/ventas"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void testGetVentas_porSucursal_devuelve200() throws Exception {
+        when(ventaService.listarPorSucursal(1L)).thenReturn(java.util.List.of(crearVentaConTotales()));
+        mockMvc.perform(get("/api/ventas").param("idSucursal", "1"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void testRegistrarVenta_stockInsuficiente_devuelve409() throws Exception {
+        Venta venta = crearVentaConTotales();
+        when(ventaService.registrarVentaDirecta(any(Venta.class)))
+                .thenThrow(new com.ventas.ms_ventas.exception.StockInsuficienteException(
+                        "Stock insuficiente para el producto 1"));
+        mockMvc.perform(post("/api/ventas")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(venta)))
+                .andExpect(status().isConflict());
+    }
 }

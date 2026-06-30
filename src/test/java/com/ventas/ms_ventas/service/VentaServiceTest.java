@@ -135,4 +135,87 @@ class VentaServiceTest {
         verify(ventaRepository, never()).save(any(Venta.class));
         verify(restTemplate, never()).put(anyString(), any());
     }
+
+    @Test
+    void testAnularVenta_revierteStock() {
+        DetalleVenta detalle = new DetalleVenta();
+        detalle.setIdProducto(1L);
+        detalle.setCantidad(2);
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        venta.setIdSucursal(1L);
+        venta.setDetalles(List.of(detalle));
+        when(ventaRepository.findById(1L)).thenReturn(java.util.Optional.of(venta));
+        ventaService.anularVenta(1L);
+        // Reingresa el stock (1 PUT) y elimina la venta
+        verify(restTemplate, times(1)).put(contains("ajustar"), any());
+        verify(ventaRepository, times(1)).delete(venta);
+    }
+
+    @Test
+    void testAnularVenta_inexistente_lanzaExcepcion() {
+        when(ventaRepository.findById(99L)).thenReturn(java.util.Optional.empty());
+        assertThrows(com.ventas.ms_ventas.exception.RecursoNoEncontradoException.class,
+                () -> ventaService.anularVenta(99L));
+        verify(ventaRepository, never()).delete(any(Venta.class));
+    }
+
+    @Test
+    void testActualizarDescuento_recalculaIVAyTotal() {
+        // Venta con subtotal 90000; aplico 20% descuento
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        venta.setSubtotalNeto(new BigDecimal("90000"));
+        venta.setDetalles(List.of(new DetalleVenta()));
+        when(ventaRepository.findById(1L)).thenReturn(java.util.Optional.of(venta));
+        when(ventaRepository.save(any(Venta.class))).thenAnswer(inv -> inv.getArgument(0));
+        Venta resultado = ventaService.actualizarDescuento(1L, new BigDecimal("20"));
+        // 90000 - 20% = 72000; IVA 19% = 13680; total = 85680
+        assertEquals(new BigDecimal("72000"), resultado.getSubtotalNeto().subtract(
+                resultado.getSubtotalNeto().multiply(new BigDecimal("20")).divide(new BigDecimal("100"))));
+        assertEquals(new BigDecimal("13680"), resultado.getIva());
+        assertEquals(new BigDecimal("85680"), resultado.getTotal());
+    }
+
+    @Test
+    void testActualizarDescuento_sobreTope_lanzaExcepcion() {
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        venta.setSubtotalNeto(new BigDecimal("90000"));
+        when(ventaRepository.findById(1L)).thenReturn(java.util.Optional.of(venta));
+        assertThrows(DescuentoNoAutorizadoException.class,
+                () -> ventaService.actualizarDescuento(1L, new BigDecimal("60")));
+        verify(ventaRepository, never()).save(any(Venta.class));
+    }
+
+    @Test
+    void testRegistrarRetiro_sinIdPedido_lanzaExcepcion() {
+        Venta venta = crearVenta(BigDecimal.ZERO);
+        venta.setIdPedido(null); // retiro requiere idPedido
+        assertThrows(com.ventas.ms_ventas.exception.RecursoNoEncontradoException.class,
+                () -> ventaService.registrarRetiro(venta));
+    }
+
+    @Test
+    void testGetVentaPorPedido() {
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.of(venta));
+        java.util.Optional<Venta> resultado = ventaService.getVentaPorPedido(5L);
+        assertTrue(resultado.isPresent());
+    }
+
+    @Test
+    void testListarPorSucursal() {
+        when(ventaRepository.findByIdSucursal(1L)).thenReturn(List.of(new Venta(), new Venta()));
+        List<Venta> resultado = ventaService.listarPorSucursal(1L);
+        assertEquals(2, resultado.size());
+    }
+
+    @Test
+    void testListarVentas() {
+        when(ventaRepository.findAll()).thenReturn(List.of(new Venta()));
+        List<Venta> resultado = ventaService.listarVentas();
+        assertEquals(1, resultado.size());
+    }
 }
