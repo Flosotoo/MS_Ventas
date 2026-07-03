@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import com.ventas.ms_ventas.dto.AjusteStockDTO;
 import com.ventas.ms_ventas.exception.DevolucionInvalidaException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.model.DetalleDevolucion;
@@ -72,11 +71,12 @@ public class DevolucionService {
         Devolucion guardada = devolucionRepository.save(devolucion);
         // reingreso a stock físico
         for (DetalleDevolucion dd : guardada.getDetalles()) {
-            AjusteStockDTO ajuste = new AjusteStockDTO(
-                    dd.getIdProducto(),
-                    venta.getIdSucursal(),
-                    dd.getCantidad(), // POSITIVO: la devolución reingresa stock
-                    "devolucion-" + guardada.getIdDevolucion() + "-producto-" + dd.getIdProducto());
+            // Usar un Map para evitar dependencias de tipo en AjusteStockDTO al serializar
+            Map<String, Object> ajuste = new HashMap<>();
+            ajuste.put("idProducto", dd.getIdProducto());
+            ajuste.put("idSucursal", venta.getIdSucursal());
+            ajuste.put("cantidad", dd.getCantidad()); // POSITIVO: la devolución reingresa stock
+            ajuste.put("idOperacion", "devolucion-" + guardada.getIdDevolucion() + "-producto-" + dd.getIdProducto());
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }
         return guardada;
@@ -102,11 +102,11 @@ public class DevolucionService {
         // se revierte la devolución. idOperacion con prefijo distinto para que la
         // idempotencia no lo confunda.
         for (DetalleDevolucion dd : devolucion.getDetalles()) {
-            AjusteStockDTO ajuste = new AjusteStockDTO(
-                    dd.getIdProducto(),
-                    idSucursal,
-                    -dd.getCantidad(), // NEGATIVO: deshace el reingreso
-                    "anulacion-devolucion-" + devolucion.getIdDevolucion() + "-producto-" + dd.getIdProducto());
+            Map<String, Object> ajuste = new HashMap<>();
+            ajuste.put("idProducto", dd.getIdProducto());
+            ajuste.put("idSucursal", idSucursal);
+            ajuste.put("cantidad", -dd.getCantidad()); // NEGATIVO: deshace el reingreso
+            ajuste.put("idOperacion", "anulacion-devolucion-" + devolucion.getIdDevolucion() + "-producto-" + dd.getIdProducto());
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }
         devolucionRepository.delete(devolucion);
