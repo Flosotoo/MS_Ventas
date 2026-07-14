@@ -1,9 +1,9 @@
 package com.ventas.ms_ventas.service;
 
 import java.math.BigDecimal;
-
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,6 +21,8 @@ import com.ventas.ms_ventas.dto.PedidoDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
+import com.ventas.ms_ventas.exception.DevolucionInvalidaException;
+import com.ventas.ms_ventas.exception.EstadoInvalidoException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
 import com.ventas.ms_ventas.model.DetalleVenta;
@@ -29,6 +31,7 @@ import com.ventas.ms_ventas.repository.VentaRepository;
 
 @Service
 public class VentaService {
+
     private static final Logger log = LoggerFactory.getLogger(VentaService.class);
 
     // Tope de descuento sin autorizacion
@@ -64,6 +67,9 @@ public class VentaService {
     @Value("${ms.sucursales.url}")
     private String URL_MS_SUCURSALES;
 
+    @Value("${ms.inventario.confirmar.url}")
+    private String URL_MS_INVENTARIO_CONFIRMAR;
+
     public Venta registrarVentaDirecta(Venta venta) {
         BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
                 ? venta.getPorcentajeDescuento()
@@ -71,7 +77,7 @@ public class VentaService {
         if (descuento.compareTo(DESCUENTO_MAXIMO) > 0) {
             throw new DescuentoNoAutorizadoException(
                     "El descuento de " + descuento + "% supera el máximo permitido ("
-                            + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
+                    + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
         validarSucursal(venta.getIdSucursal());
@@ -103,12 +109,12 @@ public class VentaService {
             if (disponible == null) {
                 throw new RecursoNoEncontradoException(
                         "No existe inventario para el producto " + detalle.getIdProducto()
-                                + " en la sucursal " + venta.getIdSucursal());
+                        + " en la sucursal " + venta.getIdSucursal());
             }
             if (disponible < detalle.getCantidad()) {
                 throw new StockInsuficienteException(
                         "Stock insuficiente para el producto " + detalle.getIdProducto()
-                                + ": disponible " + disponible + ", solicitado " + detalle.getCantidad());
+                        + ": disponible " + disponible + ", solicitado " + detalle.getCantidad());
             }
         }
         // descuentos e iva
@@ -136,24 +142,98 @@ public class VentaService {
         return guardada;
     }
 
-    // HU-55 -> Registrar retiro del pedido
-    public Venta registrarRetiro(Venta venta) {
-        if (venta.getIdPedido() == null) {
-            throw new RecursoNoEncontradoException("Para registrar un retiro se requiere el idPedido");
+    private Venta calcularYGuardarVenta(Venta venta, boolean verificarDisponibilidad) {
+    BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
+            ? venta.getPorcentajeDescuento()
+            : BigDecimal.ZERO;
+    if (descuento.compareTo(DESCUENTO_MAXIMO) > 0) {
+        throw new DescuentoNoAutorizadoException(
+                "El descuento de " + descuento + "% supera el máximo permitido ("
+                + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
+    }
+    venta.setPorcentajeDescuento(descuento);
+
+    validarSucursal(venta.getIdSucursal());
+    validarCliente(venta.getIdCliente());
+    validarPedido(venta.getIdPedido());
+
+    // Validación de cada producto y cálculo de subtotales
+    BigDecimal subtotalNeto = BigDecimal.ZERO;
+    for (DetalleVenta detalle : venta.getDetalles()) {
+        String url = URL_MS_PRODUCTOS + detalle.getIdProducto();
+        ProductoDTO producto = restTemplate.getForObject(url, ProductoDTO.class);
+        if (producto == null) {
+            throw new RecursoNoEncontradoException(
+                    "El producto " + detalle.getIdProducto() + " no existe en el catálogo");
         }
-        Venta guardada = registrarVentaDirecta(venta);
-        marcarPedidoRetirado(venta.getIdPedido());
+        detalle.setVenta(venta);
+        BigDecimal subtotal = detalle.getPrecioUnitario()
+                .multiply(BigDecimal.valueOf(detalle.getCantidad()));
+        detalle.setSubtotal(subtotal);
+        detalle.setPorcentajeDescuento(descuento);
+        subtotalNeto = subtotalNeto.add(subtotal);
+    }
+
+    // HU-55 -> Registrar retiro del pedido
+    public Venta registrarRetiro(Long idPedido) {
+        // 1. No retirar dos veces
+        if (ventaRepository.findByIdPedido(idPedido).isPresent()) {
+            throw new EstadoInvalidoException(
+                    "El pedido " + idPedido + " ya fue retirado");
+        }
+
+        // 2. Traer el pedido de Envíos
+        PedidoDTO pedido = restTemplate.getForObject(URL_MS_PEDIDOS + idPedido, PedidoDTO.class);
+        if (pedido == null) {
+            throw new RecursoNoEncontradoException("El pedido " + idPedido + " no existe");
+        }
+
+        // 3. Validar reglas del retiro
+        if (!"RETIRO_TIENDA".equals(pedido.getTipoEntrega())) {
+            throw new EstadoInvalidoException("El pedido " + idPedido + " no es de retiro en tienda");
+        }
+        if (!"PAGADO".equals(pedido.getEstado()) && !"LISTO_PARA_RETIRO".equals(pedido.getEstado())) {
+            throw new EstadoInvalidoException(
+                    "El pedido " + idPedido + " no está en condiciones de retiro (estado: " + pedido.getEstado() + ")");
+        }
+        if (pedido.getDetalles() == null || pedido.getDetalles().isEmpty()) {
+            throw new RecursoNoEncontradoException("El pedido " + idPedido + " no tiene detalles");
+        }
+
+        // 4. Construir la venta A PARTIR DEL PEDIDO
+        Venta venta = new Venta();
+        venta.setIdPedido(pedido.getIdPedido());
+        venta.setIdCliente(pedido.getIdCliente());
+        venta.setIdSucursal(pedido.getIdSucursalRetiro());
+        venta.setPorcentajeDescuento(BigDecimal.ZERO);
+
+        List<DetalleVenta> detalles = new ArrayList<>();
+        for (PedidoDTO.DetallePedidoDTO dp : pedido.getDetalles()) {
+            DetalleVenta dv = new DetalleVenta();
+            dv.setIdProducto(dp.getIdProducto());
+            dv.setCantidad(dp.getCantidad());
+            dv.setPrecioUnitario(dp.getPrecioUnitario());
+            detalles.add(dv);
+        }
+        venta.setDetalles(detalles);
+
+        // 5. Calcular y guardar (sin tocar stock)
+        Venta guardada = calcularYGuardarVenta(venta);
+
+        // 6. CONFIRMAR la reserva (no descontar: ya estaba apartado)
+        confirmarReservaStock(guardada);
+
+        // 7. Cerrar el pedido en Envíos
+        marcarPedidoRetirado(idPedido);
         return guardada;
     }
 
     private void marcarPedidoRetirado(Long idPedido) {
         try {
-            String url = URL_MS_PEDIDOS_ESTADO + idPedido + "/estado?estado=RETIRADO";
+            String url = URL_MS_PEDIDOS_ESTADO + idPedido + "/estado?nuevoEstado=RETIRADO";
             restTemplate.put(url, null);
         } catch (ResourceAccessException ex) {
-            log.warn(
-                    "No se pudo marcar el pedido {} como RETIRADO en MS Envíos (se omite, pendiente de que el MS exista): {}",
-                    idPedido, ex.getMessage());
+            log.warn("No se pudo marcar el pedido {} como RETIRADO: {}", idPedido, ex.getMessage());
         }
     }
 
@@ -181,7 +261,7 @@ public class VentaService {
         if (nuevoDescuento.compareTo(DESCUENTO_MAXIMO) > 0) {
             throw new DescuentoNoAutorizadoException(
                     "El descuento de " + nuevoDescuento + "% supera el máximo permitido ("
-                            + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
+                    + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         // Recalcular sobre el subtotal neto
         BigDecimal montoDescuento = venta.getSubtotalNeto()

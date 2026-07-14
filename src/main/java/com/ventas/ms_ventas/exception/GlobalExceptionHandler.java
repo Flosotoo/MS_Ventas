@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClientException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, String> manejoErroresValidacion(MethodArgumentNotValidException ex) {
@@ -83,6 +84,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DevolucionInvalidaException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
     public Map<String, String> manejoDevolucionInvalida(DevolucionInvalidaException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("error", ex.getMessage());
+        return error;
+    }
+
+    @ExceptionHandler(EstadoInvalidoException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> manejoEstadoInvalido(EstadoInvalidoException ex) {
         Map<String, String> error = new HashMap<>();
         error.put("error", ex.getMessage());
         return error;

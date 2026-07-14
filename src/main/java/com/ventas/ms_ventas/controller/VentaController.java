@@ -29,6 +29,7 @@ import jakarta.validation.Valid;
 @Tag(name = "Ventas", description = "Gestión de ventas presenciales y retiros web (HU-26, HU-28, HU-55)")
 
 public class VentaController {
+
     @Autowired
     private VentaService ventaService;
 
@@ -51,10 +52,11 @@ public class VentaController {
         return new ResponseEntity<>(nueva, HttpStatus.CREATED);
     }
 
-    @Operation(summary = "Registrar retiro de pedido web", description = "HU-55: registra la venta de un pedido web al momento del retiro en tienda. Requiere idPedido y marca el pedido como RETIRADO en MS Envíos.")
-    @PostMapping("/retiro")
-    public ResponseEntity<Venta> registrarRetiro(@Valid @RequestBody Venta venta) {
-        Venta nueva = ventaService.registrarRetiro(venta);
+    @Operation(summary = "Registrar retiro de pedido web",
+            description = "HU-55: materializa como venta un pedido web con retiro en tienda. Los datos se toman del pedido en MS Envíos, no del cuerpo.")
+    @PostMapping("/retiro/{idPedido}")
+    public ResponseEntity<Venta> registrarRetiro(@PathVariable Long idPedido) {
+        Venta nueva = ventaService.registrarRetiro(idPedido);
         return new ResponseEntity<>(nueva, HttpStatus.CREATED);
     }
 
@@ -71,7 +73,7 @@ public class VentaController {
     public ResponseEntity<Venta> getVentaPorPedido(@PathVariable Long idPedido) {
         Venta buscada = ventaService.getVentaPorPedido(idPedido)
                 .orElseThrow(() -> new RecursoNoEncontradoException(
-                        "No existe una venta asociada al pedido " + idPedido));
+                "No existe una venta asociada al pedido " + idPedido));
         return new ResponseEntity<>(buscada, HttpStatus.OK);
     }
 

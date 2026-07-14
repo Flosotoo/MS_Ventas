@@ -1,26 +1,25 @@
 package com.ventas.ms_ventas.service;
 
+import java.math.BigDecimal;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-
-import java.math.BigDecimal;
-import java.util.List;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
@@ -28,6 +27,7 @@ import org.springframework.web.client.RestTemplate;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
+import com.ventas.ms_ventas.exception.EstadoInvalidoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
 import com.ventas.ms_ventas.model.DetalleVenta;
 import com.ventas.ms_ventas.model.Venta;
@@ -35,6 +35,7 @@ import com.ventas.ms_ventas.repository.VentaRepository;
 
 @ExtendWith(MockitoExtension.class)
 class VentaServiceTest {
+
     @Mock
     private VentaRepository ventaRepository;
 
@@ -103,6 +104,7 @@ class VentaServiceTest {
         // se descontó stock: 1 producto => 1 PUT a inventario/ajustar
         verify(restTemplate, times(1)).put(contains("ajustar"), any());
     }
+
     @Test
     void testRegistrarVentaDirecta_descuentoSobreTope_lanzaExcepcion() {
         // Se supera el máximo de 50% => DescuentoNoAutorizadoException
@@ -189,11 +191,13 @@ class VentaServiceTest {
     }
 
     @Test
-    void testRegistrarRetiro_sinIdPedido_lanzaExcepcion() {
-        Venta venta = crearVenta(BigDecimal.ZERO);
-        venta.setIdPedido(null); // retiro requiere idPedido
-        assertThrows(com.ventas.ms_ventas.exception.RecursoNoEncontradoException.class,
-                () -> ventaService.registrarRetiro(venta));
+    void testRegistrarRetiro_pedidoYaRetirado_lanzaExcepcion() {
+        Venta ventaExistente = new Venta();
+        ventaExistente.setIdVenta(1L);
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.of(ventaExistente));
+        assertThrows(EstadoInvalidoException.class,
+                () -> ventaService.registrarRetiro(5L));
+        verify(ventaRepository, never()).save(any(Venta.class));
     }
 
     @Test
