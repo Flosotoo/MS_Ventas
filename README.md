@@ -18,18 +18,22 @@ Florencia Soto
 - Comunicación entre microservicios vía RestTemplate (consume MS Productos y Stock, MS Sucursales, MS Clientes y MS Envíos)
 - Maven, Swagger/OpenAPI (springdoc)
 
+El `RestTemplate` se configura con timeouts de conexión y lectura de 3 segundos (`RestTemplateConfig`), lo que habilita la **degradación elegante** de las validaciones externas.
+
 ## Microservicios que consume
 
 Este MS se comunica con otros microservicios vía REST para validar datos y operar el stock:
 
 | MS destino | Puerto | Para qué |
 | ---------- | ------ | -------- |
-| MS Productos y Stock | 8082 | Validar que el producto exista, consultar disponibilidad y descontar/reingresar stock |
+| MS Productos y Stock | 8082 | Validar que el producto exista, consultar disponibilidad, descontar/reingresar stock y **confirmar reservas** de pedidos web |
 | MS Sucursales y Logística | 8087 | Validar que la sucursal de la venta exista |
 | MS Clientes | 8081 | Validar el cliente cuando la venta está asociada a uno (retiro web) |
-| MS Envíos | 8091 | Validar el pedido y marcarlo como RETIRADO al registrar un retiro |
+| MS Envíos | 8091 | Leer el pedido para materializar el retiro y marcarlo como RETIRADO |
 
 Las validaciones de cliente, pedido y sucursal usan **degradación elegante**: si el MS externo está caído (timeout), la operación continúa con una advertencia en el log en vez de fallar. Las validaciones de cliente y pedido además son **condicionales**: solo ocurren si la venta trae esos datos (en una venta presencial anónima, `idCliente` e `idPedido` son null y se omiten).
+
+> **Nota sobre el stock del retiro web:** un pedido web reserva stock al momento de crearse. Por eso el retiro en tienda **no descuenta stock de nuevo**, sino que **confirma la reserva** en MS Productos (`/api/inventario/confirmar-reserva`). El descuento directo (`/api/inventario/ajustar`) se usa solo en la venta presencial.
 
 ## Endpoints
 
@@ -38,12 +42,12 @@ Las validaciones de cliente, pedido y sucursal usan **degradación elegante**: s
 | Método | Ruta | HU | Descripción |
 | ------ | ---- | -- | ----------- |
 | POST | `/api/ventas` | HU-26 | Registrar venta presencial (calcula IVA, total y descuenta stock) |
-| POST | `/api/ventas/retiro` | HU-55 | Registrar el retiro de un pedido web (requiere idPedido) |
+| POST | `/api/ventas/retiro/{idPedido}` | HU-55 | Materializar como venta un pedido web con retiro en tienda (los datos se leen del pedido, no del cuerpo) |
 | GET | `/api/ventas` | — | Listar ventas (filtro opcional por `?idSucursal=`) |
 | GET | `/api/ventas/{id}` | — | Obtener una venta por id |
 | GET | `/api/ventas/por-pedido/{idPedido}` | — | Obtener la venta asociada a un pedido web |
 | PUT | `/api/ventas/{id}/descuento` | HU-28 | Cambiar el descuento de una venta y recalcular IVA y total |
-| DELETE | `/api/ventas/{id}` | — | Anular una venta (reingresa el stock vendido) |
+| DELETE | `/api/ventas/{id}` | — | Anular una venta presencial (reingresa el stock vendido) |
 
 ### Devoluciones
 
@@ -72,13 +76,13 @@ Requiere que MySQL esté corriendo (XAMPP). La base de datos `db_ventas` se crea
 ./mvnw test
 ```
 
-El MS incluye dos dominios de prueba (ventas y devoluciones), cada uno con sus tres niveles:
+El MS incluye dos dominios de prueba (ventas y devoluciones), cada uno con sus niveles unitario, web e integración:
 
-- **`VentaServiceTest`** (unitario, Mockito): valida las reglas de negocio del service — cálculo de IVA (19%) y total, rechazo de descuento sobre el 50%, rechazo por stock insuficiente, anulación de venta con reversión de stock, actualización de descuento y registro de retiro web. Mockea las llamadas a los otros microservicios.
-- **`DevolucionServiceTest`** (unitario, Mockito): valida las reglas de negocio de devoluciones — reingreso de stock, rechazo cuando el producto no pertenece a la venta, rechazo al devolver más de lo vendido (considerando devoluciones previas acumuladas) y anulación con reversión del reingreso.
-- **`VentaControllerTest`** (`@WebMvcTest`): valida la capa web de ventas aislada — códigos HTTP correctos (200/201/204/404/409) con el service mockeado.
+- **`VentaServiceTest`** (unitario, Mockito): valida las reglas de negocio del service — cálculo de IVA (19%) y total, rechazo de descuento sobre el 50%, rechazo por stock insuficiente, actualización de descuento, anulación de venta con reversión de stock y sus restricciones. También cubre el flujo de **retiro web**: éxito confirmando la reserva (verifica que se llame a `confirmar-reserva` y **nunca** a `ajustar`), pedido ya retirado, pedido inexistente, pedido que no es de retiro en tienda, pedido no pagado y pedido sin detalles. Mockea las llamadas a los otros microservicios.
+- **`DevolucionServiceTest`** (unitario, Mockito): valida las reglas de negocio de devoluciones — reingreso de stock, rechazo cuando el producto no pertenece a la venta, rechazo al devolver más de lo vendido (considerando devoluciones previas acumuladas, incluido el caso de límite exacto) y anulación con reversión del reingreso.
+- **`VentaControllerTest`** (`@WebMvcTest`): valida la capa web de ventas aislada — códigos HTTP correctos (200/201/204/404/409) con el service mockeado, incluyendo el retiro exitoso (201) y el retiro de un pedido ya retirado (409).
 - **`DevolucionControllerTest`** (`@WebMvcTest`): valida la capa web de devoluciones aislada — códigos HTTP correctos (200/201/204/404/409) con el service mockeado.
-- **`VentaControllerIT`** (`@SpringBootTest`): valida la cadena completa controller → service → base de datos (H2 en memoria), mockeando solo las llamadas a otros microservicios.
+- **`VentaControllerIT`** (`@SpringBootTest` + `@ActiveProfiles("test")`): valida la cadena completa controller → service → base de datos, mockeando solo las llamadas a otros microservicios (`RestTemplate`). Verifica el cálculo de totales sobre una venta real, el rechazo de descuento sobre el tope y el 404 por venta inexistente.
 
 ## Estructura de requests y respuestas
 
@@ -124,31 +128,24 @@ El MS incluye dos dominios de prueba (ventas y devoluciones), cada uno con sus t
 - Al guardar, descuenta el stock de cada producto (ajuste negativo con idOperacion único para idempotencia)
 - `idCliente` e `idPedido` son opcionales (null en venta presencial anónima)
 
-### POST /api/ventas/retiro — Registrar retiro de pedido web
+### POST /api/ventas/retiro/{idPedido} — Registrar retiro de pedido web
 
 ```
-// Request (requiere idPedido)
-{
-  "idPedido": 5,
-  "idCliente": 3,
-  "idSucursal": 1,
-  "porcentajeDescuento": 0,
-  "detalles": [
-    {
-      "idProducto": 1,
-      "cantidad": 1,
-      "precioUnitario": 45000
-    }
-  ]
-}
+// El idPedido viaja en la ruta. NO se envía cuerpo.
+POST /api/ventas/retiro/5
 
-// Response: 201 Created → misma estructura que la venta directa
+// Response: 201 Created → misma estructura que la venta directa,
+// con idPedido e idCliente tomados del pedido
 ```
 
 **Reglas de negocio:**
 
-- Requiere `idPedido` (404 si no se envía)
-- Reutiliza toda la lógica de la venta directa (cálculo, validación de stock, descuento)
+- El `idPedido` se recibe como variable de ruta; **todos los datos de la venta se leen del pedido en MS Envíos**, no del cuerpo de la solicitud (sucursal = `idSucursalRetiro`, cliente, detalles, precios).
+- El pedido debe existir (404 Not Found si MS Envíos no lo encuentra o llega sin detalles)
+- No debe existir ya una venta asociada a ese pedido, es decir, el pedido no puede haber sido retirado antes (409 Conflict)
+- El pedido debe estar en estado `PAGADO` (409 Conflict si no)
+- El tipo de entrega del pedido debe ser `RETIRO_TIENDA` (409 Conflict si es despacho a domicilio u otro)
+- **Confirma la reserva de stock** en MS Productos (`/api/inventario/confirmar-reserva`) en lugar de descontar stock: el pedido web ya había reservado las unidades al crearse
 - Tras registrar la venta, marca el pedido como RETIRADO en MS Envíos (con degradación elegante si el MS no está disponible)
 - Este endpoint cierra el flujo de compra web cuando el cliente eligió "retiro en tienda"
 
@@ -182,7 +179,11 @@ PUT /api/ventas/1/descuento?porcentaje=20
 Response: 204 No Content
 ```
 
-**Regla:** Reingresa al inventario el stock que se había descontado (ajuste positivo con idOperacion de prefijo `anulacion-venta-`), luego elimina la venta. 404 si no existe.
+**Reglas:**
+
+- Solo se pueden anular **ventas presenciales**. Si la venta proviene de un retiro web (tiene `idPedido`), se rechaza con 409 Conflict (`EstadoInvalidoException`), ya que su stock se maneja mediante la reserva del pedido.
+- Al anular una venta presencial, reingresa al inventario el stock que se había descontado (ajuste positivo con idOperacion de prefijo `anulacion-venta-`) y luego elimina la venta.
+- 404 si la venta no existe.
 
 ### POST /api/devoluciones — Procesar devolución
 
@@ -242,24 +243,28 @@ El MS usa un `GlobalExceptionHandler` que traduce las excepciones a códigos HTT
 
 | Excepción | Código | Cuándo |
 | --------- | ------ | ------ |
-| `RecursoNoEncontradoException` | 404 Not Found | Venta, devolución, producto o pedido inexistente |
+| `RecursoNoEncontradoException` | 404 Not Found | Venta, devolución, producto o pedido inexistente (o pedido sin detalles) |
 | `DescuentoNoAutorizadoException` | 409 Conflict | Descuento superior al 50% sin autorización |
 | `StockInsuficienteException` | 409 Conflict | No hay stock suficiente para la venta |
 | `DevolucionInvalidaException` | 409 Conflict | Devolver más de lo vendido o producto ajeno a la venta |
+| `EstadoInvalidoException` | 409 Conflict | Retiro de un pedido en estado inválido (no pagado, no es retiro en tienda, ya retirado) o intento de anular una venta de retiro web |
 | `MethodArgumentNotValidException` | 400 Bad Request | Validación de campos fallida |
 | `HttpMessageNotReadableException` | 400 Bad Request | JSON mal formado |
+| `DataIntegrityViolationException` | 409 Conflict | El recurso ya existe o viola una restricción de la base de datos |
 | `RestClientException` | 502 Bad Gateway | Error al comunicarse con otro microservicio |
 
 ## Idempotencia del stock
 
 Todas las operaciones que ajustan stock envían un `idOperacion` único al MS Productos, con prefijos distintos según la operación:
 
-- `venta-{id}-producto-{id}` — descuento por venta
+- `venta-{id}-producto-{id}` — descuento por venta presencial
 - `anulacion-venta-{id}-producto-{id}` — reingreso por anulación de venta
 - `devolucion-{id}-producto-{id}` — reingreso por devolución
 - `anulacion-devolucion-{id}-producto-{id}` — reverso de devolución
 
 Esto garantiza que si una llamada se repite (por reintentos de red), el stock no se ajusta dos veces.
+
+En el retiro web el stock no se vuelve a descontar: la venta **confirma la reserva** previamente hecha por el pedido mediante `/api/inventario/confirmar-reserva`.
 
 ## Configuración de base de datos
 
@@ -276,10 +281,11 @@ URLs de los microservicios que consume (en `application.properties`):
 ms.productos.url=http://localhost:8082/api/productos/
 ms.inventario.ajuste.url=http://localhost:8082/api/inventario/ajustar
 ms.inventario.disponibilidad.url=http://localhost:8082/api/inventario/disponibilidad
+ms.inventario.confirmar.url=http://localhost:8082/api/inventario/confirmar-reserva
+ms.clientes.url=http://localhost:8081/api/usuarios/
+ms.pedidos.url=http://localhost:8091/api/v1/pedidos/
+ms.pedidos.estado.url=http://localhost:8091/api/v1/pedidos/
 ms.sucursales.url=http://localhost:8087/api/v1/sucursales/
-ms.clientes.url=http://localhost:8081/api/clientes/
-ms.pedidos.url=http://localhost:8091/api/pedidos/
-ms.pedidos.estado.url=http://localhost:8091/api/pedidos/
 ```
 
 ## Swagger / OpenAPI
