@@ -107,7 +107,7 @@ public class VentaService {
             subtotalNeto = subtotalNeto.add(subtotal);
         }
 
-        // Verificación de disponibilidad SOLO en venta presencial.
+        // Verificación de disponibilidad solo en venta presencial.
         // En el retiro web el stock ya está reservado por MS Envíos, así que
         // no figura como disponible y verificarlo daría un falso "stock insuficiente".
         if (verificarDisponibilidad) {
@@ -147,19 +147,19 @@ public class VentaService {
 
     // HU-55 -> Registrar retiro del pedido
     public Venta registrarRetiro(Long idPedido) {
-        // 1. Un pedido solo se retira una vez
+        //Un pedido solo se retira una vez
         if (ventaRepository.findByIdPedido(idPedido).isPresent()) {
             throw new EstadoInvalidoException(
                     "El pedido " + idPedido + " ya fue retirado y tiene una venta asociada");
         }
 
-        // 2. Traer el pedido REAL desde MS Envíos
+        //Se traer el pedido real desde MS Envíos
         PedidoDTO pedido = restTemplate.getForObject(URL_MS_PEDIDOS + idPedido, PedidoDTO.class);
         if (pedido == null) {
             throw new RecursoNoEncontradoException("El pedido " + idPedido + " no existe");
         }
 
-        // 3. Reglas de negocio del retiro
+        //Reglas de negocio del retiro
         if (!"RETIRO_TIENDA".equals(pedido.getTipoEntrega())) {
             throw new EstadoInvalidoException(
                     "El pedido " + idPedido + " es de despacho a domicilio, no se retira en tienda");
@@ -173,7 +173,7 @@ public class VentaService {
             throw new RecursoNoEncontradoException("El pedido " + idPedido + " no tiene detalles");
         }
 
-        // 4. CONSTRUIR la venta a partir del pedido (no del cuerpo del cliente)
+        //Se construye la venta a partir del pedido y no del cuerpo del cliente
         Venta venta = new Venta();
         venta.setIdPedido(pedido.getIdPedido());
         venta.setIdCliente(pedido.getIdCliente());
@@ -190,13 +190,13 @@ public class VentaService {
         }
         venta.setDetalles(detalles);
 
-        // 5. Calcular y guardar (sin verificar disponibilidad: ya está reservado)
+        //Calcular y guardar (sin verificar disponibilidad, ya está reservado)
         Venta guardada = calcularYGuardarVenta(venta, false);
 
-        // 6. CONFIRMAR la reserva que hizo Envíos (no descontar: sería doble)
+        //CONFIRMAR la reserva que hizo Envíos (no descontar, sería doble)
         confirmarReservaStock(guardada);
 
-        // 7. Cerrar el pedido en Envíos
+        //Cerrar el pedido en Envíos
         marcarPedidoRetirado(idPedido);
 
         return guardada;
@@ -218,7 +218,7 @@ public class VentaService {
             AjusteStockDTO peticion = new AjusteStockDTO(
                     detalle.getIdProducto(),
                     venta.getIdSucursal(),
-                    detalle.getCantidad(), // POSITIVO: cantidad a confirmar, no un delta
+                    detalle.getCantidad(),
                     null);
             restTemplate.put(URL_MS_INVENTARIO_CONFIRMAR, peticion);
         }
@@ -226,7 +226,6 @@ public class VentaService {
 
     private void marcarPedidoRetirado(Long idPedido) {
         try {
-            // OJO: el @RequestParam de Envíos se llama "nuevoEstado", no "estado"
             String url = URL_MS_PEDIDOS_ESTADO + idPedido + "/estado?nuevoEstado=RETIRADO";
             restTemplate.put(url, null);
         } catch (ResourceAccessException ex) {
