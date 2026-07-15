@@ -21,7 +21,6 @@ import com.ventas.ms_ventas.dto.PedidoDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
-import com.ventas.ms_ventas.exception.DevolucionInvalidaException;
 import com.ventas.ms_ventas.exception.EstadoInvalidoException;
 import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
@@ -71,6 +70,12 @@ public class VentaService {
     private String URL_MS_INVENTARIO_CONFIRMAR;
 
     public Venta registrarVentaDirecta(Venta venta) {
+        Venta guardada = calcularYGuardarVenta(venta, true); // sí verifica disponibilidad
+        descontarStock(guardada);
+        return guardada;
+    }
+
+    private Venta calcularYGuardarVenta(Venta venta, boolean verificarDisponibilidad) {
         BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
                 ? venta.getPorcentajeDescuento()
                 : BigDecimal.ZERO;
@@ -80,10 +85,12 @@ public class VentaService {
                     + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
         }
         venta.setPorcentajeDescuento(descuento);
+
         validarSucursal(venta.getIdSucursal());
         validarCliente(venta.getIdCliente());
         validarPedido(venta.getIdPedido());
-        // Validacion de cada producto y calculo de subtotales
+
+        // Validación de cada producto y cálculo de subtotales
         BigDecimal subtotalNeto = BigDecimal.ZERO;
         for (DetalleVenta detalle : venta.getDetalles()) {
             String url = URL_MS_PRODUCTOS + detalle.getIdProducto();
@@ -99,108 +106,74 @@ public class VentaService {
             detalle.setPorcentajeDescuento(descuento);
             subtotalNeto = subtotalNeto.add(subtotal);
         }
-        // Verificacion de disponibilidad de los productos
-        // Si alguno no alcanza, se lanza excepción antes de tocar el stock.
-        for (DetalleVenta detalle : venta.getDetalles()) {
-            String url = URL_MS_INVENTARIO_DISPONIBILIDAD
-                    + "?idProducto=" + detalle.getIdProducto()
-                    + "&idSucursal=" + venta.getIdSucursal();
-            Integer disponible = restTemplate.getForObject(url, Integer.class);
-            if (disponible == null) {
-                throw new RecursoNoEncontradoException(
-                        "No existe inventario para el producto " + detalle.getIdProducto()
-                        + " en la sucursal " + venta.getIdSucursal());
-            }
-            if (disponible < detalle.getCantidad()) {
-                throw new StockInsuficienteException(
-                        "Stock insuficiente para el producto " + detalle.getIdProducto()
-                        + ": disponible " + disponible + ", solicitado " + detalle.getCantidad());
+
+        // Verificación de disponibilidad SOLO en venta presencial.
+        // En el retiro web el stock ya está reservado por MS Envíos, así que
+        // no figura como disponible y verificarlo daría un falso "stock insuficiente".
+        if (verificarDisponibilidad) {
+            for (DetalleVenta detalle : venta.getDetalles()) {
+                String url = URL_MS_INVENTARIO_DISPONIBILIDAD
+                        + "?idProducto=" + detalle.getIdProducto()
+                        + "&idSucursal=" + venta.getIdSucursal();
+                Integer disponible = restTemplate.getForObject(url, Integer.class);
+                if (disponible == null) {
+                    throw new RecursoNoEncontradoException(
+                            "No existe inventario para el producto " + detalle.getIdProducto()
+                            + " en la sucursal " + venta.getIdSucursal());
+                }
+                if (disponible < detalle.getCantidad()) {
+                    throw new StockInsuficienteException(
+                            "Stock insuficiente para el producto " + detalle.getIdProducto()
+                            + ": disponible " + disponible + ", solicitado " + detalle.getCantidad());
+                }
             }
         }
-        // descuentos e iva
+
+        // Descuentos e IVA
         BigDecimal montoDescuento = subtotalNeto
                 .multiply(descuento)
                 .divide(new BigDecimal("100"), 0, RoundingMode.HALF_UP);
         BigDecimal netoConDescuento = subtotalNeto.subtract(montoDescuento);
         BigDecimal iva = netoConDescuento.multiply(TASA_IVA).setScale(0, RoundingMode.HALF_UP);
         BigDecimal total = netoConDescuento.add(iva);
+
         venta.setSubtotalNeto(subtotalNeto);
         venta.setIva(iva);
         venta.setTotal(total);
         venta.setFecha(LocalDateTime.now());
-        // se guarda la venta
-        Venta guardada = ventaRepository.save(venta);
-        // Se descuenta stock
-        for (DetalleVenta detalle : guardada.getDetalles()) {
-            AjusteStockDTO ajuste = new AjusteStockDTO(
-                    detalle.getIdProducto(),
-                    guardada.getIdSucursal(),
-                    -detalle.getCantidad(),
-                    "venta-" + guardada.getIdVenta() + "-producto-" + detalle.getIdProducto());
-            restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
-        }
-        return guardada;
-    }
 
-    private Venta calcularYGuardarVenta(Venta venta, boolean verificarDisponibilidad) {
-    BigDecimal descuento = (venta.getPorcentajeDescuento() != null)
-            ? venta.getPorcentajeDescuento()
-            : BigDecimal.ZERO;
-    if (descuento.compareTo(DESCUENTO_MAXIMO) > 0) {
-        throw new DescuentoNoAutorizadoException(
-                "El descuento de " + descuento + "% supera el máximo permitido ("
-                + DESCUENTO_MAXIMO + "%) sin autorización de gerente");
-    }
-    venta.setPorcentajeDescuento(descuento);
-
-    validarSucursal(venta.getIdSucursal());
-    validarCliente(venta.getIdCliente());
-    validarPedido(venta.getIdPedido());
-
-    // Validación de cada producto y cálculo de subtotales
-    BigDecimal subtotalNeto = BigDecimal.ZERO;
-    for (DetalleVenta detalle : venta.getDetalles()) {
-        String url = URL_MS_PRODUCTOS + detalle.getIdProducto();
-        ProductoDTO producto = restTemplate.getForObject(url, ProductoDTO.class);
-        if (producto == null) {
-            throw new RecursoNoEncontradoException(
-                    "El producto " + detalle.getIdProducto() + " no existe en el catálogo");
-        }
-        detalle.setVenta(venta);
-        BigDecimal subtotal = detalle.getPrecioUnitario()
-                .multiply(BigDecimal.valueOf(detalle.getCantidad()));
-        detalle.setSubtotal(subtotal);
-        detalle.setPorcentajeDescuento(descuento);
-        subtotalNeto = subtotalNeto.add(subtotal);
+        return ventaRepository.save(venta);
     }
 
     // HU-55 -> Registrar retiro del pedido
     public Venta registrarRetiro(Long idPedido) {
-        // 1. No retirar dos veces
+        // 1. Un pedido solo se retira una vez
         if (ventaRepository.findByIdPedido(idPedido).isPresent()) {
             throw new EstadoInvalidoException(
-                    "El pedido " + idPedido + " ya fue retirado");
+                    "El pedido " + idPedido + " ya fue retirado y tiene una venta asociada");
         }
 
-        // 2. Traer el pedido de Envíos
+        // 2. Traer el pedido REAL desde MS Envíos
         PedidoDTO pedido = restTemplate.getForObject(URL_MS_PEDIDOS + idPedido, PedidoDTO.class);
         if (pedido == null) {
             throw new RecursoNoEncontradoException("El pedido " + idPedido + " no existe");
         }
 
-        // 3. Validar reglas del retiro
+        // 3. Reglas de negocio del retiro
         if (!"RETIRO_TIENDA".equals(pedido.getTipoEntrega())) {
-            throw new EstadoInvalidoException("El pedido " + idPedido + " no es de retiro en tienda");
+            throw new EstadoInvalidoException(
+                    "El pedido " + idPedido + " es de despacho a domicilio, no se retira en tienda");
         }
         if (!"PAGADO".equals(pedido.getEstado()) && !"LISTO_PARA_RETIRO".equals(pedido.getEstado())) {
             throw new EstadoInvalidoException(
-                    "El pedido " + idPedido + " no está en condiciones de retiro (estado: " + pedido.getEstado() + ")");
+                    "El pedido " + idPedido + " no está en condiciones de retiro (estado: "
+                    + pedido.getEstado() + ")");
         }
         if (pedido.getDetalles() == null || pedido.getDetalles().isEmpty()) {
             throw new RecursoNoEncontradoException("El pedido " + idPedido + " no tiene detalles");
         }
 
-        // 4. Construir la venta A PARTIR DEL PEDIDO
+        // 4. CONSTRUIR la venta a partir del pedido (no del cuerpo del cliente)
         Venta venta = new Venta();
         venta.setIdPedido(pedido.getIdPedido());
         venta.setIdCliente(pedido.getIdCliente());
@@ -217,35 +190,67 @@ public class VentaService {
         }
         venta.setDetalles(detalles);
 
-        // 5. Calcular y guardar (sin tocar stock)
-        Venta guardada = calcularYGuardarVenta(venta);
+        // 5. Calcular y guardar (sin verificar disponibilidad: ya está reservado)
+        Venta guardada = calcularYGuardarVenta(venta, false);
 
-        // 6. CONFIRMAR la reserva (no descontar: ya estaba apartado)
+        // 6. CONFIRMAR la reserva que hizo Envíos (no descontar: sería doble)
         confirmarReservaStock(guardada);
 
         // 7. Cerrar el pedido en Envíos
         marcarPedidoRetirado(idPedido);
+
         return guardada;
+    }
+
+    private void descontarStock(Venta venta) {
+        for (DetalleVenta detalle : venta.getDetalles()) {
+            AjusteStockDTO ajuste = new AjusteStockDTO(
+                    detalle.getIdProducto(),
+                    venta.getIdSucursal(),
+                    -detalle.getCantidad(),
+                    "venta-" + venta.getIdVenta() + "-producto-" + detalle.getIdProducto());
+            restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
+        }
+    }
+
+    private void confirmarReservaStock(Venta venta) {
+        for (DetalleVenta detalle : venta.getDetalles()) {
+            AjusteStockDTO peticion = new AjusteStockDTO(
+                    detalle.getIdProducto(),
+                    venta.getIdSucursal(),
+                    detalle.getCantidad(), // POSITIVO: cantidad a confirmar, no un delta
+                    null);
+            restTemplate.put(URL_MS_INVENTARIO_CONFIRMAR, peticion);
+        }
     }
 
     private void marcarPedidoRetirado(Long idPedido) {
         try {
+            // OJO: el @RequestParam de Envíos se llama "nuevoEstado", no "estado"
             String url = URL_MS_PEDIDOS_ESTADO + idPedido + "/estado?nuevoEstado=RETIRADO";
             restTemplate.put(url, null);
         } catch (ResourceAccessException ex) {
-            log.warn("No se pudo marcar el pedido {} como RETIRADO: {}", idPedido, ex.getMessage());
+            log.warn("No se pudo marcar el pedido {} como RETIRADO en MS Envíos: {}",
+                    idPedido, ex.getMessage());
         }
     }
 
     public void anularVenta(Long id) {
         Venta venta = ventaRepository.findById(id)
                 .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró la venta con id " + id));
-        // Se revierte el stock
+        // Una venta de retiro web no se anula aquí: el pedido se cancela en MS Envíos,
+        // que sabe cómo revertir su propia reserva de stock.
+        if (venta.getIdPedido() != null) {
+            throw new EstadoInvalidoException(
+                    "La venta " + id + " proviene del pedido web " + venta.getIdPedido()
+                    + ". Su cancelación debe gestionarse en MS Envíos.");
+        }
+        // Venta presencial: reingresa el stock que se descontó
         for (DetalleVenta detalle : venta.getDetalles()) {
             AjusteStockDTO ajuste = new AjusteStockDTO(
                     detalle.getIdProducto(),
                     venta.getIdSucursal(),
-                    detalle.getCantidad(), // POSITIVO: reingresa lo vendido
+                    detalle.getCantidad(),
                     "anulacion-venta-" + venta.getIdVenta() + "-producto-" + detalle.getIdProducto());
             restTemplate.put(URL_MS_INVENTARIO_AJUSTE, ajuste);
         }

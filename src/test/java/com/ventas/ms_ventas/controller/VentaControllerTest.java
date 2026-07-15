@@ -1,23 +1,23 @@
 package com.ventas.ms_ventas.controller;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
@@ -25,7 +25,6 @@ import com.ventas.ms_ventas.model.DetalleVenta;
 import com.ventas.ms_ventas.model.Venta;
 import com.ventas.ms_ventas.service.VentaService;
 
-import org.springframework.http.MediaType;
 
 @WebMvcTest(VentaController.class)
 class VentaControllerTest {
@@ -131,6 +130,24 @@ class VentaControllerTest {
         mockMvc.perform(post("/api/ventas")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(venta)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void testRegistrarRetiro_devuelve201() throws Exception {
+        Venta venta = crearVentaConTotales(); // tu helper existente
+        when(ventaService.registrarRetiro(5L)).thenReturn(venta);
+
+        mockMvc.perform(post("/api/ventas/retiro/5"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void testRegistrarRetiro_pedidoYaRetirado_devuelve409() throws Exception {
+        when(ventaService.registrarRetiro(5L))
+                .thenThrow(new com.ventas.ms_ventas.exception.EstadoInvalidoException("Ya fue retirado"));
+
+        mockMvc.perform(post("/api/ventas/retiro/5"))
                 .andExpect(status().isConflict());
     }
 }

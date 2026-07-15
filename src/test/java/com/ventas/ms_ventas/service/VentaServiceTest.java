@@ -24,10 +24,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
+import com.ventas.ms_ventas.dto.ClienteDTO;
+import com.ventas.ms_ventas.dto.PedidoDTO;
 import com.ventas.ms_ventas.dto.ProductoDTO;
 import com.ventas.ms_ventas.dto.SucursalDTO;
 import com.ventas.ms_ventas.exception.DescuentoNoAutorizadoException;
 import com.ventas.ms_ventas.exception.EstadoInvalidoException;
+import com.ventas.ms_ventas.exception.RecursoNoEncontradoException;
 import com.ventas.ms_ventas.exception.StockInsuficienteException;
 import com.ventas.ms_ventas.model.DetalleVenta;
 import com.ventas.ms_ventas.model.Venta;
@@ -56,6 +59,7 @@ class VentaServiceTest {
         ReflectionTestUtils.setField(ventaService, "URL_MS_PEDIDOS", "http://localhost:9999/api/pedidos/");
         ReflectionTestUtils.setField(ventaService, "URL_MS_PEDIDOS_ESTADO", "http://localhost:9999/api/pedidos/");
         ReflectionTestUtils.setField(ventaService, "URL_MS_SUCURSALES", "http://localhost:9999/api/v1/sucursales/");
+        ReflectionTestUtils.setField(ventaService, "URL_MS_INVENTARIO_CONFIRMAR", "http://localhost:9999/api/inventario/confirmar-reserva");
     }
 
     // Venta de 2 unidades con descuento
@@ -77,6 +81,23 @@ class VentaServiceTest {
         sucursal.setIdSucursal(1L);
         sucursal.setNombre("Sucursal Centro");
         when(restTemplate.getForObject(anyString(), eq(SucursalDTO.class))).thenReturn(sucursal);
+    }
+
+    private PedidoDTO crearPedidoValido() {
+        PedidoDTO.DetallePedidoDTO dp = new PedidoDTO.DetallePedidoDTO();
+        dp.setIdProducto(1L);
+        dp.setCantidad(2);
+        dp.setPrecioUnitario(new BigDecimal("45000"));
+
+        PedidoDTO pedido = new PedidoDTO();
+        pedido.setIdPedido(5L);
+        pedido.setIdCliente(3L);
+        pedido.setEstado("PAGADO");
+        pedido.setTipoEntrega("RETIRO_TIENDA");
+        pedido.setIdSucursalRetiro(1L);
+        pedido.setTotal(new BigDecimal("90000"));
+        pedido.setDetalles(List.of(dp));
+        return pedido;
     }
 
     @Test
@@ -155,14 +176,6 @@ class VentaServiceTest {
     }
 
     @Test
-    void testAnularVenta_inexistente_lanzaExcepcion() {
-        when(ventaRepository.findById(99L)).thenReturn(java.util.Optional.empty());
-        assertThrows(com.ventas.ms_ventas.exception.RecursoNoEncontradoException.class,
-                () -> ventaService.anularVenta(99L));
-        verify(ventaRepository, never()).delete(any(Venta.class));
-    }
-
-    @Test
     void testActualizarDescuento_recalculaIVAyTotal() {
         // Venta con subtotal 90000; aplico 20% descuento
         Venta venta = new Venta();
@@ -191,16 +204,6 @@ class VentaServiceTest {
     }
 
     @Test
-    void testRegistrarRetiro_pedidoYaRetirado_lanzaExcepcion() {
-        Venta ventaExistente = new Venta();
-        ventaExistente.setIdVenta(1L);
-        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.of(ventaExistente));
-        assertThrows(EstadoInvalidoException.class,
-                () -> ventaService.registrarRetiro(5L));
-        verify(ventaRepository, never()).save(any(Venta.class));
-    }
-
-    @Test
     void testGetVentaPorPedido() {
         Venta venta = new Venta();
         venta.setIdVenta(1L);
@@ -221,5 +224,133 @@ class VentaServiceTest {
         when(ventaRepository.findAll()).thenReturn(List.of(new Venta()));
         List<Venta> resultado = ventaService.listarVentas();
         assertEquals(1, resultado.size());
+    }
+
+    @Test
+    void testRegistrarRetiro_exitoso_confirmaReservaYCierraPedido() {
+        PedidoDTO pedido = crearPedidoValido();
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.empty());
+        when(restTemplate.getForObject(anyString(), eq(PedidoDTO.class))).thenReturn(pedido);
+
+        ProductoDTO producto = new ProductoDTO();
+        producto.setIdProducto(1L);
+        when(restTemplate.getForObject(anyString(), eq(ProductoDTO.class))).thenReturn(producto);
+
+        // NUEVO: sucursal válida (es lo que faltaba y causó el error)
+        SucursalDTO sucursal = new SucursalDTO();
+        sucursal.setIdSucursal(1L);
+        when(restTemplate.getForObject(anyString(), eq(SucursalDTO.class))).thenReturn(sucursal);
+
+        // NUEVO: cliente válido (idCliente=3 no es null, así que también se valida)
+        ClienteDTO cliente = new ClienteDTO();
+        cliente.setIdCliente(3L);
+        when(restTemplate.getForObject(anyString(), eq(ClienteDTO.class))).thenReturn(cliente);
+
+        when(ventaRepository.save(any(Venta.class))).thenAnswer(inv -> {
+            Venta v = inv.getArgument(0);
+            v.setIdVenta(1L);
+            return v;
+        });
+
+        Venta resultado = ventaService.registrarRetiro(5L);
+
+        assertNotNull(resultado);
+        assertEquals(5L, resultado.getIdPedido());
+        verify(restTemplate, times(1)).put(contains("confirmar-reserva"), any());
+        verify(restTemplate, never()).put(contains("ajustar"), any());
+    }
+
+    @Test
+    void testRegistrarRetiro_pedidoYaRetirado_lanzaExcepcion() {
+        Venta existente = new Venta();
+        existente.setIdVenta(1L);
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.of(existente));
+
+        assertThrows(EstadoInvalidoException.class,
+                () -> ventaService.registrarRetiro(5L));
+
+        verify(ventaRepository, never()).save(any(Venta.class));
+    }
+
+    @Test
+    void testRegistrarRetiro_pedidoInexistente_lanzaExcepcion() {
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.empty());
+        when(restTemplate.getForObject(anyString(), eq(PedidoDTO.class))).thenReturn(null);
+
+        assertThrows(RecursoNoEncontradoException.class,
+                () -> ventaService.registrarRetiro(5L));
+    }
+
+    @Test
+    void testRegistrarRetiro_noEsRetiroTienda_lanzaExcepcion() {
+        PedidoDTO pedido = crearPedidoValido();
+        pedido.setTipoEntrega("DESPACHO_DOMICILIO"); // no es retiro
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.empty());
+        when(restTemplate.getForObject(anyString(), eq(PedidoDTO.class))).thenReturn(pedido);
+
+        assertThrows(EstadoInvalidoException.class,
+                () -> ventaService.registrarRetiro(5L));
+
+        verify(ventaRepository, never()).save(any(Venta.class));
+    }
+
+    @Test
+    void testRegistrarRetiro_noPagado_lanzaExcepcion() {
+        PedidoDTO pedido = crearPedidoValido();
+        pedido.setEstado("PENDIENTE_PAGO"); // no está pagado
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.empty());
+        when(restTemplate.getForObject(anyString(), eq(PedidoDTO.class))).thenReturn(pedido);
+
+        assertThrows(EstadoInvalidoException.class,
+                () -> ventaService.registrarRetiro(5L));
+    }
+
+    @Test
+    void testRegistrarRetiro_sinDetalles_lanzaExcepcion() {
+        PedidoDTO pedido = crearPedidoValido();
+        pedido.setDetalles(java.util.List.of()); // sin detalles
+        when(ventaRepository.findByIdPedido(5L)).thenReturn(java.util.Optional.empty());
+        when(restTemplate.getForObject(anyString(), eq(PedidoDTO.class))).thenReturn(pedido);
+
+        assertThrows(RecursoNoEncontradoException.class,
+                () -> ventaService.registrarRetiro(5L));
+    }
+
+    @Test
+    void testAnularVenta_presencial_reingresaStock() {
+        DetalleVenta detalle = new DetalleVenta();
+        detalle.setIdProducto(1L);
+        detalle.setCantidad(2);
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        venta.setIdSucursal(1L);
+        venta.setIdPedido(null); // presencial
+        venta.setDetalles(List.of(detalle));
+        when(ventaRepository.findById(1L)).thenReturn(java.util.Optional.of(venta));
+
+        ventaService.anularVenta(1L);
+
+        verify(restTemplate, times(1)).put(contains("ajustar"), any());
+        verify(ventaRepository, times(1)).delete(venta);
+    }
+
+    @Test
+    void testAnularVenta_retiroWeb_lanzaExcepcion() {
+        Venta venta = new Venta();
+        venta.setIdVenta(1L);
+        venta.setIdPedido(5L); // proviene de retiro web
+        when(ventaRepository.findById(1L)).thenReturn(java.util.Optional.of(venta));
+
+        assertThrows(EstadoInvalidoException.class,
+                () -> ventaService.anularVenta(1L));
+
+        verify(ventaRepository, never()).delete(any(Venta.class));
+    }
+
+    @Test
+    void testAnularVenta_inexistente_lanzaExcepcion() {
+        when(ventaRepository.findById(99L)).thenReturn(java.util.Optional.empty());
+        assertThrows(RecursoNoEncontradoException.class,
+                () -> ventaService.anularVenta(99L));
     }
 }
